@@ -416,3 +416,12 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Valheim managed binaries
+lib/net46/
+*.dll
+
+# nuget artifacts
+artifacts/
+*.nupkg
+*.snupkg
