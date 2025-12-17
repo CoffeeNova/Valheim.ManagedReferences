@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>CoffeeNova.Valheim.ManagedReferences</id>
+    <version>0.0.1</version>
+    <title>Valheim Managed DLLs for Modding</title>
+    <authors>CoffeeNova</authors>
+    <owners>CoffeeNova</owners>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>A small repo to build a NuGet package that contains reference DLLs copied from a local Valheim installation (valheim_Data/Managed) for use as compile-time references in Valheim/BepInEx mod projects.</description>
+    <copyright></copyright>
+    <projectUrl>https://github.com/CoffeeNova/Valheim.ManagedReferences</projectUrl>
+    <repository type="git" url="https://github.com/CoffeeNova/Valheim.ManagedReferences" />
+    <tags>valheim coffeejelly coffenova managedreferences bepinex</tags>
+    <dependencies>
+    </dependencies>
+  </metadata>
+  <files>
+  </files>
+</package>
