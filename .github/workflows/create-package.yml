@@ -22,6 +22,8 @@ on:
 jobs:
   build:
     runs-on: self-hosted
+    env:
+      DOTNET_INSTALL_DIR: ${{ github.workspace }}/.dotnet
     
     steps:
       - uses: actions/checkout@v4
