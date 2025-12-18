@@ -33,7 +33,6 @@ jobs:
         run: |
           MANIFEST_FILE="/home/gh-runner/valheim/steamapps/appmanifest_892970.acf"
           if [ -f "$MANIFEST_FILE" ]; then
-            # Поддержка как табов, так и пробелов
             CURRENT_BUILD=$(grep -oP '"buildid"\s+"\K[^"]+' "$MANIFEST_FILE" || echo "0")
             echo "current_build=$CURRENT_BUILD" >> $GITHUB_OUTPUT
             echo "Current Valheim build: $CURRENT_BUILD"
