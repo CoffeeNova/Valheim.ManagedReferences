@@ -54,37 +54,28 @@ jobs:
       
       - name: Update Valheim
         id: update_valheim
+        timeout-minutes: 90
         run: |
           LOG_FILE="/tmp/valheim_update_${{ github.run_number }}.log"
           
-          echo "Updating Valheim..."
-          (
-            while true; do
-              sleep 30
-              echo "--- Keep-alive: $(date) - Download in progress ---"
-              pgrep -f steamcmd > /dev/null || break
-            done
-          ) &
-          KEEPALIVE_PID=$!
-          steamcmd +@sSteamCmdForcePlatformType windows \
+          echo "Starting Valheim update at $(date)"
+          
+          script -q -c "steamcmd \
+            +@sSteamCmdForcePlatformType windows \
             +force_install_dir /home/gh-runner/valheim \
             +login ${{ secrets.STEAM_USERNAME }} \
             +app_update 892970 validate \
-            +quit | tee "$LOG_FILE"
+            +quit" "$LOG_FILE"
           
-          EXIT_CODE=${PIPESTATUS[0]}
-          kill $KEEPALIVE_PID 2>/dev/null || true
+          EXIT_CODE=$?
+          
           echo "Completed at $(date) with exit code: $EXIT_CODE"
-    
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "=== Full Log ==="
-            cat "$LOG_FILE"
-            exit $EXIT_CODE
-          fi
-          
-          echo "Valheim update completed"
           echo "=== Update Log ==="
           cat "$LOG_FILE"
+          
+          if [ $EXIT_CODE -ne 0 ]; then
+            exit $EXIT_CODE
+          fi
           
           # Get new build ID
           MANIFEST_FILE="/home/gh-runner/valheim/steamapps/appmanifest_892970.acf"
@@ -96,6 +87,7 @@ jobs:
             echo "Error: Manifest file not found!"
             exit 1
           fi
+
       
       - name: Check if update occurred
         id: check_update
