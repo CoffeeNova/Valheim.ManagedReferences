@@ -58,11 +58,29 @@ jobs:
           LOG_FILE="/tmp/valheim_update_${{ github.run_number }}.log"
           
           echo "Updating Valheim..."
+          (
+            while true; do
+              sleep 30
+              echo "--- Keep-alive: $(date) - Download in progress ---"
+              pgrep -f steamcmd > /dev/null || break
+            done
+          ) &
+          KEEPALIVE_PID=$!
           steamcmd +@sSteamCmdForcePlatformType windows \
-            +login ${{ secrets.STEAM_USERNAME }} \
             +force_install_dir /home/gh-runner/valheim \
+            +login ${{ secrets.STEAM_USERNAME }} \
             +app_update 892970 validate \
             +quit | tee "$LOG_FILE"
+          
+          EXIT_CODE=${PIPESTATUS[0]}
+          kill $KEEPALIVE_PID 2>/dev/null || true
+          echo "Completed at $(date) with exit code: $EXIT_CODE"
+    
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "=== Full Log ==="
+            cat "$LOG_FILE"
+            exit $EXIT_CODE
+          fi
           
           echo "Valheim update completed"
           echo "=== Update Log ==="
