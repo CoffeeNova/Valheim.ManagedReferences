@@ -31,13 +31,15 @@ jobs:
         run: |
           MANIFEST_FILE="/home/gh-runner/valheim/steamapps/appmanifest_892970.acf"
           if [ -f "$MANIFEST_FILE" ]; then
-            CURRENT_BUILD=$(grep -oP '(?<="buildid"\s{4}").*(?=")' "$MANIFEST_FILE" || echo "0")
+            # Поддержка как табов, так и пробелов
+            CURRENT_BUILD=$(grep -oP '"buildid"\s+"\K[^"]+' "$MANIFEST_FILE" || echo "0")
             echo "current_build=$CURRENT_BUILD" >> $GITHUB_OUTPUT
             echo "Current Valheim build: $CURRENT_BUILD"
           else
             echo "current_build=0" >> $GITHUB_OUTPUT
             echo "No existing installation found"
           fi
+
       
       - name: Update Valheim
         id: update_valheim
@@ -57,9 +59,14 @@ jobs:
           
           # Get new build ID
           MANIFEST_FILE="/home/gh-runner/valheim/steamapps/appmanifest_892970.acf"
-          NEW_BUILD=$(grep -oP '(?<="buildid"\s{4}").*(?=")' "$MANIFEST_FILE")
-          echo "new_build=$NEW_BUILD" >> $GITHUB_OUTPUT
-          echo "New Valheim build: $NEW_BUILD"
+          if [ -f "$MANIFEST_FILE" ]; then
+            NEW_BUILD=$(grep -oP '"buildid"\s+"\K[^"]+' "$MANIFEST_FILE")
+            echo "new_build=$NEW_BUILD" >> $GITHUB_OUTPUT
+            echo "New Valheim build: $NEW_BUILD"
+          else
+            echo "Error: Manifest file not found!"
+            exit 1
+          fi
       
       - name: Check if update occurred
         id: check_update
