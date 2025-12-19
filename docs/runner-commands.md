@@ -389,6 +389,23 @@ sudo journalctl -u actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-va
 
 ```
 
+### Clean Runner Job Data
+
+```text
+
+cd /home/gh-runner/actions-runner
+sudo ./svc.sh stop
+
+
+rm -rf /home/gh-runner/actions-runner/_diag/*
+rm -rf /home/gh-runner/actions-runner/_work/*
+rm -rf /home/gh-runner/actions-runner/_temp/*
+
+
+sudo ./svc.sh start
+
+```
+
 ### GLIBC Version Error
 
 If you see errors about GLIBC_2.27 or GLIBC_2.28:
