@@ -20,8 +20,17 @@ on:
         default: false
 
 jobs:
+  clean:
+    runs-on: self-hosted
+    steps:
+      - name: Clean runner logs
+        run: |
+          rm -rf $HOME/actions-runner/_diag/pages/*.log || true
+        continue-on-error: true
+        
   build:
     runs-on: self-hosted
+    needs: clean
     env:
       DOTNET_INSTALL_DIR: ${{ github.workspace }}/.dotnet
   
