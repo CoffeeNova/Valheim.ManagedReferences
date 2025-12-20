@@ -2,7 +2,8 @@ name: Pack Managed References
 
 on:
   schedule:
-    - cron: '0 */1 * * *' # раз в час (можно реже)
+    - cron: '0 */1 * * *' # every hour
+
   workflow_dispatch:
     inputs:
       publish:
