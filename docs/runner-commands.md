@@ -337,8 +337,9 @@ sudo apt install steamcmd
 ```text
 # First-time login (requires Steam Guard code)
 steamcmd +login YOUR_STEAM_USERNAME
+```
 
-# Install Valheim Windows version
+```test
 steamcmd +@sSteamCmdForcePlatformType windows \
 +login YOUR_STEAM_USERNAME \
 +force_install_dir /home/gh-runner/valheim \
@@ -361,6 +362,22 @@ steamcmd +@sSteamCmdForcePlatformType windows \
 +quit
 ```
 
+### Install Valheim Dedicated Server
+
+
+```text
+# First-time login (requires Steam Guard code)
+steamcmd +login YOUR_STEAM_USERNAME
+```
+
+```text
+
+steamcmd +login YOUR_STEAM_USERNAME \
++force_install_dir /home/gh-runner/valheim_server \
++app_update 896660 validate \
++quit
+
+```
 
 
 ## Automatic Valheim Updates

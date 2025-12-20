@@ -15,7 +15,6 @@ permissions:
   contents: write
   packages: write
 
-
 jobs:
   build:
     runs-on: self-hosted
@@ -23,7 +22,9 @@ jobs:
     env:
       DOTNET_INSTALL_DIR: ${{ github.workspace }}/.dotnet
       VALHEIM_DIR: /home/gh-runner/valheim
+      VALHEIM_SERVER_DIR: /home/gh-runner/valheim_server
       VALHEIM_APPID: 892970
+      VALHEIM_SERVER_APPID: 896660
 
     steps:
       - name: Checkout
@@ -92,14 +93,78 @@ jobs:
 
           echo "valheim_build=$UPDATED" >> "$GITHUB_OUTPUT"
 
-      - name: Compute package version
-        id: ver
+      - name: Resolve Valheim human version (SteamDB)
+        id: steamdb_ver
         if: steps.gate.outputs.build == 'true'
         shell: bash
+        env:
+          STEAMDB_URL: https://steamdb.info/app/${{ env.VALHEIM_APPID }}/patchnotes/
+          CURRENT_BUILDID: ${{ steps.gate.outputs.valheim_build }}
         run: |
-          BUILD="${{ steps.gate.outputs.valheim_build }}"
+          python3 - <<'PY'
+          import os, re, urllib.request, sys
+
+          url = os.environ["STEAMDB_URL"]
+          build_str = os.environ.get("CURRENT_BUILDID", "0")
+          try:
+              current_build = int(build_str)
+          except ValueError:
+              current_build = 0
+
+          out_path = os.environ["GITHUB_OUTPUT"]
+
+          def write_outputs(resolved, ver="", minor="", patch_buildid=""):
+              with open(out_path, "a", encoding="utf-8") as out:
+                  out.write(f"resolved={'true' if resolved else 'false'}\n")
+                  out.write(f"valheim_version={ver}\n")
+                  out.write(f"valheim_minor={minor}\n")
+                  out.write(f"valheim_patch_buildid={patch_buildid}\n")
+
+          try:
+              html = urllib.request.urlopen(url, timeout=30).read().decode("utf-8", "replace")
+          except Exception as e:
+              print(f"::warning::Failed to fetch SteamDB patchnotes: {e}")
+              write_outputs(False)
+              sys.exit(0)
+
+          best_build = -1
+          best_ver = None
+
+          rows = re.split(r"<tr[^>]*>", html, flags=re.IGNORECASE)
+          for row in rows:
+              m_ver = re.search(r"\bPatch\s+(\d+\.\d+\.\d+)\b", row)
+              if not m_ver:
+                  continue
+
+              m_bid = re.search(r">\s*(\d{7,})\s*<", row)
+              if not m_bid:
+                  continue
+
+              bid = int(m_bid.group(1))
+              if bid <= current_build and bid > best_build:
+                  best_build = bid
+                  best_ver = m_ver.group(1)
+
+          if not best_ver:
+              print(f"::warning::No SteamDB patch entry with human version found for buildid <= {current_build}. Skipping build.")
+              write_outputs(False)
+              sys.exit(0)
+
+          parts = best_ver.split(".")
+          minor = f"{parts[1]}{parts[2]}"  # 0.221.4 -> 2214
+
+          print(f"Resolved Valheim version from SteamDB: {best_ver} (minor={minor}, patch_buildid={best_build})")
+          write_outputs(True, best_ver, minor, str(best_build))
+          PY
+
+      - name: Compute package version
+        id: ver
+        if: steps.gate.outputs.build == 'true' && steps.steamdb_ver.outputs.resolved == 'true'
+        shell: bash
+        run: |
           MAJOR="1"
-          PREFIX="v${MAJOR}.${BUILD}."
+          MINOR="${{ steps.steamdb_ver.outputs.valheim_minor }}"
+          PREFIX="v${MAJOR}.${MINOR}."
 
           git fetch --tags --force
 
@@ -111,14 +176,14 @@ jobs:
             PATCH=$((PATCH + 1))
           fi
 
-          VERSION="${MAJOR}.${BUILD}.${PATCH}"
+          VERSION="${MAJOR}.${MINOR}.${PATCH}"
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
           echo "Computed VERSION=$VERSION"
 
       - name: Sync managed references
-        if: steps.gate.outputs.build == 'true'
+        if: steps.gate.outputs.build == 'true' && steps.steamdb_ver.outputs.resolved == 'true'
         shell: bash
         run: |
           dotnet run tools/sync-managed.cs \
@@ -126,7 +191,7 @@ jobs:
             --outDir lib/net46
 
       - name: Update nuspec and pack
-        if: steps.gate.outputs.build == 'true'
+        if: steps.gate.outputs.build == 'true' && steps.steamdb_ver.outputs.resolved == 'true'
         shell: bash
         run: |
           VERSION="${{ steps.ver.outputs.version }}"
@@ -150,14 +215,14 @@ jobs:
             -o .
 
       - name: Upload NuGet artifact
-        if: steps.gate.outputs.build == 'true'
+        if: steps.gate.outputs.build == 'true' && steps.steamdb_ver.outputs.resolved == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: nuget-package
           path: '*.nupkg'
 
       - name: Tag (publish)
-        if: steps.gate.outputs.build == 'true' && (github.event_name == 'schedule' || github.event.inputs.publish == 'true')
+        if: steps.gate.outputs.build == 'true' && steps.steamdb_ver.outputs.resolved == 'true' && (github.event_name == 'schedule' || github.event.inputs.publish == 'true')
         shell: bash
         run: |
           git config user.name  "github-actions[bot]"
@@ -167,7 +232,7 @@ jobs:
           git push origin "$TAG"
 
       - name: Publish package to GitHub Packages
-        if: steps.gate.outputs.build == 'true' && (github.event_name == 'schedule' || github.event.inputs.publish == 'true')
+        if: steps.gate.outputs.build == 'true' && steps.steamdb_ver.outputs.resolved == 'true' && (github.event_name == 'schedule' || github.event.inputs.publish == 'true')
         shell: bash
         run: |
           dotnet nuget push "./*.nupkg" \
@@ -177,7 +242,7 @@ jobs:
             --no-symbols
 
       - name: Create GitHub Release
-        if: steps.gate.outputs.build == 'true' && (github.event_name == 'schedule' || github.event.inputs.publish == 'true')
+        if: steps.gate.outputs.build == 'true' && steps.steamdb_ver.outputs.resolved == 'true' && (github.event_name == 'schedule' || github.event.inputs.publish == 'true')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
@@ -185,7 +250,7 @@ jobs:
           generate_release_notes: true
 
       - name: Publish package to nuget.org
-        if: steps.gate.outputs.build == 'true' && (github.event_name == 'schedule' || github.event.inputs.publish == 'true')
+        if: steps.gate.outputs.build == 'true' && steps.steamdb_ver.outputs.resolved == 'true' && (github.event_name == 'schedule' || github.event.inputs.publish == 'true')
         shell: bash
         run: |
           dotnet nuget push "./*.nupkg" \
@@ -193,4 +258,3 @@ jobs:
             --api-key "${{ secrets.NUGET_ORG_API_KEY }}" \
             --skip-duplicate \
             --no-symbols
-
