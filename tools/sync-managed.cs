@@ -9,8 +9,6 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
 
-System.Diagnostics.Debugger.Launch();
-
 var opts = ParseArgs(args);
 var repoRoot = Directory.GetCurrentDirectory();
 
@@ -48,7 +46,7 @@ static string ResolveValheimManagedPath(Options opts)
             Environment.GetEnvironmentVariable("VALHEIM_MANAGED"))
         ?? FindValheimManagedPath(opts.SteamPath);
 
-    return Path.GetFullPath(managedPath);
+    return NormalizePathCasingIfNeeded(managedPath);
 }
 
 static string? FirstNonEmpty(params string?[] values)
@@ -584,8 +582,17 @@ static string FindValheimManagedPath(string? steamPathOverride)
 
     var libraries = GetSteamLibraryRoots(steamInstall);
     var valheimRoot = ResolveSteamAppInstallDir(libraries, appId: "892970");
-    return Path.Combine(valheimRoot, "valheim_Data", "Managed");
+    var dataDir = FindChildDirIgnoreCase(valheimRoot, "valheim_data");
+    var managedDir = FindChildDirIgnoreCase(dataDir, "managed");
+    return managedDir;
 }
+
+static string FindChildDirIgnoreCase(string parent, string childName)
+{
+    var match = Directory.EnumerateDirectories(parent, "*", SearchOption.TopDirectoryOnly)
+        .FirstOrDefault(d => string.Equals(Path.GetFileName(d), childName, StringComparison.OrdinalIgnoreCase));
+        return match ?? Path.Combine(parent, childName);
+ }
 
 static string? GetSteamInstallPathAuto()
 {
@@ -751,6 +758,47 @@ static string NormalizeDir(string p) =>
 
 static bool PathsEqual(string a, string b) =>
     string.Equals(NormalizeDir(a), NormalizeDir(b), StringComparison.OrdinalIgnoreCase);
+
+static string NormalizePathCasingIfNeeded(string path)
+{
+    var full = Path.GetFullPath(path);
+
+    if (Directory.Exists(full) || File.Exists(full))
+        return full;
+
+    if (OperatingSystem.IsWindows())
+        return full;
+
+    return TryResolveExistingPathIgnoreCase(full) ?? full;
+}
+
+static string? TryResolveExistingPathIgnoreCase(string fullPath)
+{
+    var root = Path.GetPathRoot(fullPath);
+    if (string.IsNullOrEmpty(root))
+        return null;
+
+    var current = root;
+    var rest = fullPath.Substring(root.Length);
+
+    var parts = rest.Split(new[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries);
+
+    foreach (var part in parts)
+    {
+        if (!Directory.Exists(current))
+            return null;
+
+        var match = Directory.EnumerateFileSystemEntries(current, "*", SearchOption.TopDirectoryOnly)
+            .FirstOrDefault(p => string.Equals(Path.GetFileName(p), part, StringComparison.OrdinalIgnoreCase));
+
+        if (match is null)
+            return null;
+
+        current = match;
+    }
+
+    return current;
+}
 
 sealed class Options
 {
