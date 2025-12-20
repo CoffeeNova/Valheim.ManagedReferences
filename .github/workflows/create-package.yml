@@ -14,6 +14,7 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write
 
 jobs:
   build:
@@ -25,13 +26,9 @@ jobs:
       VALHEIM_SERVER_DIR: /home/gh-runner/valheim_server
       VALHEIM_APPID: 892970
       VALHEIM_SERVER_APPID: 896660
+      NUGET_USER: CoffeeNova
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -219,12 +216,19 @@ jobs:
           files: '*.nupkg'
           generate_release_notes: true
 
+      - name: NuGet login (OIDC → temp API key)
+        if: steps.gate.outputs.build == 'true' && steps.steam_ver.outputs.resolved == 'true' && (github.event_name == 'schedule' || github.event.inputs.publish == 'true')
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ env.NUGET_USER }}
+
       - name: Publish package to nuget.org
         if: steps.gate.outputs.build == 'true' && steps.steam_ver.outputs.resolved == 'true' && (github.event_name == 'schedule' || github.event.inputs.publish == 'true')
         shell: bash
         run: |
           dotnet nuget push "./*.nupkg" \
             --source "https://api.nuget.org/v3/index.json" \
-            --api-key "${{ secrets.NUGET_ORG_API_KEY }}" \
+            --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" \
             --skip-duplicate \
             --no-symbols
