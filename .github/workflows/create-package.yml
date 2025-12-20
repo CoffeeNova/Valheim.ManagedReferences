@@ -19,7 +19,6 @@ permissions:
 jobs:
 
   build:
-    if: github.event_name != 'workflow_dispatch'
     runs-on: self-hosted
 
     env:
