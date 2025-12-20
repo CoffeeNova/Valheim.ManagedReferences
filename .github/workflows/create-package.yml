@@ -32,7 +32,34 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check .NET 10 presence
+        id: dotnet_check
+        shell: bash
+        run: |
+          python3 .github/workflows/scripts/check_dotnet10.py --out "$GITHUB_OUTPUT"
+
+      - name: Add dotnet to PATH (if already installed)
+        if: steps.dotnet_check.outputs.dotnet_path != ''
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          dotnet_path = os.environ["DOTNET_PATH"]
+          dotnet_dir = os.path.dirname(dotnet_path)
+          with open(os.environ["GITHUB_PATH"], "a", encoding="utf-8") as f:
+              f.write(dotnet_dir + "\n")
+          print(f"Added to PATH: {dotnet_dir}")
+          PY
+        env:
+          DOTNET_PATH: ${{ steps.dotnet_check.outputs.dotnet_path }}
+
       - name: Setup .NET 10
+        if: steps.dotnet_check.outputs.dotnet10_installed != 'true'
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
@@ -41,16 +68,24 @@ jobs:
         id: installed
         shell: bash
         run: |
-          MANIFEST="$VALHEIM_DIR/steamapps/appmanifest_${VALHEIM_APPID}.acf"
-          if [ -f "$MANIFEST" ]; then
-            BUILD=$(grep -oP '"buildid"\s+"\K[^"]+' "$MANIFEST" || echo "0")
-          else
-            BUILD="0"
-          fi
-          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          python3 .github/workflows/scripts/read_valheim_installed_build.py \
+            --valheim-dir "$VALHEIM_DIR" \
+            --appid "$VALHEIM_APPID" \
+            --out "$GITHUB_OUTPUT"
+
+      - name: Check Valheim update (UpToDateCheck)
+        id: uptodate
+        shell: bash
+        run: |
+          python3 .github/workflows/scripts/steam_uptodatecheck.py \
+            --appid "$VALHEIM_APPID" \
+            --version "${{ steps.installed.outputs.build }}" \
+            --out "$GITHUB_OUTPUT"
+
 
       - name: Update Valheim (steamcmd)
         id: updated
+        if: steps.uptodate.outputs.up_to_date != 'true' || github.event_name == 'workflow_dispatch'
         shell: bash
         timeout-minutes: 90
         run: |
@@ -75,23 +110,12 @@ jobs:
         id: gate
         shell: bash
         run: |
-          INSTALLED="${{ steps.installed.outputs.build }}"
-          UPDATED="${{ steps.updated.outputs.build }}"
-          EVENT="${{ github.event_name }}"
-
-          echo "installed=$INSTALLED updated=$UPDATED event=$EVENT"
-
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            echo "build=true" >> "$GITHUB_OUTPUT"
-          else
-            if [ "$INSTALLED" != "$UPDATED" ]; then
-              echo "build=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "build=false" >> "$GITHUB_OUTPUT"
-            fi
-          fi
-
-          echo "valheim_build=$UPDATED" >> "$GITHUB_OUTPUT"
+          python3 .github/workflows/scripts/decide_whether_to_build.py \
+            --event "${{ github.event_name }}" \
+            --up-to-date "${{ steps.uptodate.outputs.up_to_date }}" \
+            --installed-build "${{ steps.installed.outputs.build }}" \
+            --updated-build "${{ steps.updated.outputs.build }}" \
+            --out "$GITHUB_OUTPUT"
 
       - name: Resolve Valheim human version (Steam News API)
         id: steam_ver
