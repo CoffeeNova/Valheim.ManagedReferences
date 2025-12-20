@@ -17,7 +17,9 @@ permissions:
   id-token: write
 
 jobs:
+
   build:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: self-hosted
 
     env:
@@ -26,7 +28,6 @@ jobs:
       VALHEIM_SERVER_DIR: /home/gh-runner/valheim_server
       VALHEIM_APPID: 892970
       VALHEIM_SERVER_APPID: 896660
-      NUGET_USER: CoffeeNova
 
     steps:
       - name: Checkout
@@ -221,7 +222,7 @@ jobs:
         id: login
         uses: NuGet/login@v1
         with:
-          user: ${{ env.NUGET_USER }}
+          user: ${{ secrets.NUGET_USER }}
 
       - name: Publish package to nuget.org
         if: steps.gate.outputs.build == 'true' && steps.steam_ver.outputs.resolved == 'true' && (github.event_name == 'schedule' || github.event.inputs.publish == 'true')
