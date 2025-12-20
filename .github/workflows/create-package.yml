@@ -128,8 +128,24 @@ jobs:
         shell: bash
         run: |
           VERSION="${{ steps.ver.outputs.version }}"
+
           sed "s/.*<\/version>/${VERSION}<\/version>/" template.nuspec > Valheim.Managed.nuspec
-          dotnet pack -p:NuspecFile=Valheim.Managed.nuspec -o .
+
+          cat > pack.csproj <<'EOF'
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <TargetFramework>netstandard2.0</TargetFramework>
+              <IsPackable>true</IsPackable>
+              <IncludeBuildOutput>false</IncludeBuildOutput>
+            </PropertyGroup>
+          </Project>
+          EOF
+
+          dotnet restore pack.csproj
+          dotnet pack pack.csproj -c Release --no-build --no-restore \
+            -p:NuspecFile=Valheim.Managed.nuspec \
+            -p:NuspecBasePath="${PWD}" \
+            -o .
 
       - name: Upload NuGet artifact
         if: steps.gate.outputs.build == 'true'
