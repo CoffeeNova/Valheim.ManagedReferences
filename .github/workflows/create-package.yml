@@ -10,10 +10,6 @@ on:
         description: 'Create git tag + GitHub Release'
         type: boolean
         default: true
-      diagnose_push_last:
-        description: 'DIAG: skip build and push latest GitHub Release package to nuget.org via Trusted Publishing'
-        type: boolean
-        default: false
 
 permissions:
   contents: write
@@ -22,77 +18,8 @@ permissions:
 
 jobs:
 
-  diagnose-push-last:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.diagnose_push_last == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-
-    steps:
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-
-      - name: Download latest release .nupkg
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          python3 - <<'PY'
-          import json, os, urllib.request, urllib.error
-
-          repo = os.environ["GH_REPO"]
-          token = os.environ["GH_TOKEN"]
-
-          def gh_json(url):
-              req = urllib.request.Request(url, headers={
-                  "Authorization": f"Bearer {token}",
-                  "Accept": "application/vnd.github+json",
-                  "User-Agent": "gha-diag"
-              })
-              with urllib.request.urlopen(req) as r:
-                  return json.load(r)
-
-          latest = gh_json(f"https://api.github.com/repos/{repo}/releases/latest")
-          assets = latest.get("assets", [])
-          nupkgs = [a for a in assets if a.get("name","").endswith(".nupkg") and not a.get("name","").endswith(".snupkg")]
-
-          if not nupkgs:
-              raise SystemExit("No .nupkg assets found in latest GitHub Release")
-
-          for a in nupkgs:
-              name = a["name"]
-              url = a["url"]  # assets API url
-              req = urllib.request.Request(url, headers={
-                  "Authorization": f"Bearer {token}",
-                  "Accept": "application/octet-stream",
-                  "User-Agent": "gha-diag"
-              })
-              with urllib.request.urlopen(req) as r, open(name, "wb") as f:
-                  f.write(r.read())
-              print("Downloaded", name)
-          PY
-
-      - name: NuGet login (OIDC → temp API key)
-        id: login
-        uses: NuGet/login@v1
-        with:
-          user: ${{ secrets.NUGET_USER }}
-
-      - name: Push latest release package to nuget.org
-        shell: bash
-        run: |
-          dotnet nuget push "./*.nupkg" \
-            --source "https://api.nuget.org/v3/index.json" \
-            --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" \
-            --skip-duplicate \
-            --no-symbols
-
   build:
-    if: github.event_name != 'workflow_dispatch' || github.event.inputs.diagnose_push_last != 'true'
+    if: github.event_name != 'workflow_dispatch'
     runs-on: self-hosted
 
     env:
