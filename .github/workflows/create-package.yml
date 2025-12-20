@@ -13,6 +13,8 @@ on:
 
 permissions:
   contents: write
+  packages: write
+
 
 jobs:
   build:
@@ -164,6 +166,16 @@ jobs:
           git tag "$TAG"
           git push origin "$TAG"
 
+      - name: Publish package to GitHub Packages
+        if: steps.gate.outputs.build == 'true' && (github.event_name == 'schedule' || github.event.inputs.publish == 'true')
+        shell: bash
+        run: |
+          dotnet nuget push "./*.nupkg" \
+            --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
+            --api-key "${{ secrets.GITHUB_TOKEN }}" \
+            --skip-duplicate \
+            --no-symbols
+
       - name: Create GitHub Release
         if: steps.gate.outputs.build == 'true' && (github.event_name == 'schedule' || github.event.inputs.publish == 'true')
         uses: softprops/action-gh-release@v2
@@ -171,3 +183,14 @@ jobs:
           tag_name: ${{ steps.ver.outputs.tag }}
           files: '*.nupkg'
           generate_release_notes: true
+
+      - name: Publish package to nuget.org
+        if: steps.gate.outputs.build == 'true' && (github.event_name == 'schedule' || github.event.inputs.publish == 'true')
+        shell: bash
+        run: |
+          dotnet nuget push "./*.nupkg" \
+            --source "https://api.nuget.org/v3/index.json" \
+            --api-key "${{ secrets.NUGET_ORG_API_KEY }}" \
+            --skip-duplicate \
+            --no-symbols
+
