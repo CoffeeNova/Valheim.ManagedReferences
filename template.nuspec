@@ -12,10 +12,12 @@
     <projectUrl>https://github.com/CoffeeNova/Valheim.ManagedReferences</projectUrl>
     <repository type="git" url="https://github.com/CoffeeNova/Valheim.ManagedReferences" />
     <tags>valheim coffeejelly coffenova managedreferences bepinex</tags>
+    <readme>README.md</readme>
     <dependencies>
     </dependencies>
   </metadata>
   <files>
+    <file src="README.md" target="" />
     <file src="lib/net46/*.dll" target="lib/net46" />
     <file src="lib/net46/*.xml" target="lib/net46" />
     <file src="lib/net46/*.pdb" target="lib/net46" />
