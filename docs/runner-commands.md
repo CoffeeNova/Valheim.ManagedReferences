@@ -1,209 +1,344 @@
 # GitHub Actions Self-Hosted Runner Setup Guide
 
+
 ## Initial Setup
+
 
 ### 1. Create Runner User
 
+
+```text
 sudo adduser gh-runner
 sudo usermod -aG sudo gh-runner
 sudo su - gh-runner
+```
+
 
 ### 2. Install GitHub Actions Runner
 
-## Create directory
+
+#### Create directory
+
 
 ```text
-mkdir actions-runner \&\& cd actions-runner
+mkdir -p ~/actions-runner && cd ~/actions-runner
 ```
 
-## Download runner (get latest version from GitHub)
+
+#### Download runner (get latest version from GitHub)
+
 
 ```text
-wget https://github.com/actions/runner/releases/download/v2.329.0/actions-runner-linux-x64-2.329.0.tar.gz
-tar xzf actions-runner-linux-x64-2.329.0.tar.gz
+# Example — replace with the latest version from GitHub Releases
+wget https://github.com/actions/runner/releases/download/v2.330.0/actions-runner-linux-x64-2.330.0.tar.gz
+tar xzf actions-runner-linux-x64-2.330.0.tar.gz
 ```
 
-## Configure runner
+
+#### Configure runner
+
 
 Get token from: GitHub → Settings → Actions → Runners → New self-hosted runner
+
 
 ```text
 ./config.sh --url https://github.com/YOUR_ORG/YOUR_REPO --token YOUR_TOKEN
 ```
 
-## During setup
+
+#### During setup
+
 
 - Runner group: [press Enter for Default]
-
- Runner name: ubuntu-valheim-runner
-
+- Runner name: ubuntu-valheim-runner
 - Labels: ubuntu,valheim
-
 - Work folder: [press Enter for _work]
 
-### 3. Install as systemd Service
 
-Create/edit the service file:
+### 3. Install as systemd Service (recommended)
+
+
+GitHub recommends installing/managing the runner as a service via `svc.sh` (created after a successful `./config.sh`).[1]
+
+
+#### Install and start service (via svc.sh)
+
+
+```text
+cd /home/gh-runner/actions-runner
+
+# Install systemd unit
+sudo ./svc.sh install
+
+# Start service
+sudo ./svc.sh start
+```
+
+
+#### Enable autostart
+
+
+```text
+# Find the exact unit name (depends on owner/repo/runner-name)
+systemctl list-units | grep actions.runner
+
+# Then enable autostart (example unit name):
+sudo systemctl enable actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
+```
+
+
+### 4. IMPORTANT: Fix KillMode + prevent _diag conflicts
+
+
+#### Why this matters
+
+
+If the service stops uncleanly and leaves runner child processes behind, GitHub may return `A session for this runner already exists` (SessionConflict), and the runner may also leave stale diagnostic files under `_diag/pages`, which can later trigger errors like:
+
+`Error: The file '/home/gh-runner/actions-runner/_diag/pages/...log' already exists.`
+
+Setting `KillMode=control-group` ensures systemd kills all remaining processes in the unit’s control group on stop, not just the main process.[2]
+
+
+#### Apply systemd override (fixes “left-over process” issue)
+
+
+```text
+sudo systemctl edit actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
+```
+
+
+Paste:
+
+
+```text
+[Service]
+KillMode=control-group
+```
+
+
+Apply and restart:
+
+
+```text
+sudo systemctl daemon-reload
+sudo systemctl restart actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
+```
+
+
+Verify:
+
+
+```text
+systemctl show -p KillMode actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
+# Expected: KillMode=control-group
+```
+
+
+#### Optional: auto-clean _diag/pages + _work/_temp before service start
+
+
+Runner diagnostics are stored under `_diag/`. Cleaning `_diag/pages` before each start can help prevent `...log already exists` issues.[3]
+
+
+Edit override again:
+
+
+```text
+sudo systemctl edit actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
+```
+
+
+Add/replace with:
+
+
+```text
+[Service]
+KillMode=control-group
+ExecStartPre=/bin/bash -lc 'rm -rf /home/gh-runner/actions-runner/_diag/pages/* /home/gh-runner/actions-runner/_work/_temp/* || true'
+```
+
+
+Apply:
+
+
+```text
+sudo systemctl daemon-reload
+sudo systemctl restart actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
+```
+
+
+### 5. (Optional) Manual service file (NOT recommended)
+
+
+If you must create a unit manually: run the runner via `runsvc.sh` (not `run.sh`) and set `KillMode=control-group`. GitHub documents using `svc.sh` for systemd-based Linux systems.[1]
+
+
+Service file path example:
+
 
 ```text
 sudo nano /etc/systemd/system/actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
-
 ```
 
-**Service Configuration:**
+
+Example configuration:
+
 
 ```text
-
 [Unit]
-Description=GitHub Actions Runner (CoffeeNova-Valheim.ubuntu-valheim-runner)
+Description=GitHub Actions Runner (CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+ExecStart=/home/gh-runner/actions-runner/runsvc.sh
 User=gh-runner
 WorkingDirectory=/home/gh-runner/actions-runner
-ExecStart=/bin/bash -c "source /home/gh-runner/.profile \&\& /home/gh-runner/actions-runner/run.sh"
-TimeoutStartSec=0
-Restart=always
-RestartSec=10
-KillMode=process
+KillMode=control-group
 KillSignal=SIGTERM
+TimeoutStopSec=5min
 
 [Install]
 WantedBy=multi-user.target
-
 ```
+
 
 Enable and start:
 
-```text
 
+```text
 sudo systemctl daemon-reload
 sudo systemctl enable actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
 sudo systemctl start actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
-
 ```
+
+
 
 ## Runner Management Commands
 
+
 ### Basic Operations
 
-```text
 
+```text
 cd ~/actions-runner
-
 ```
 
-## Check status
+
+#### Check status
+
 
 ```text
-
-sudo systemctl status actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
-
+sudo systemctl status actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service --no-pager
 ```
 
-## Start runner
+
+#### Start runner
+
 
 ```text
-
 sudo systemctl start actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
-
 ```
 
-## Stop runner
+
+#### Stop runner
+
 
 ```text
-
 sudo systemctl stop actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
-
 ```
 
-## Restart runner
+
+#### Restart runner
+
 
 ```text
-
 sudo systemctl restart actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
-
 ```
 
-## View logs in real-time
+
+#### View logs in real-time
+
 
 ```text
 sudo journalctl -u actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service -f
 ```
 
-## View recent logs
+
+#### View recent logs
+
 
 ```text
-
 sudo journalctl -u actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service -n 100 --no-pager
-
 ```
+
 
 ### Manual Run (for debugging)
 
-```text
 
+Do not run `./run.sh` in parallel with the systemd service (it may cause session conflicts).
+
+
+```text
 cd ~/actions-runner
 ./run.sh
 
 # Press Ctrl+C to stop
-
 ```
+
 
 ### Useful Aliases
 
-```text
 
+```text
 # Add to ~/.bashrc
 
-echo 'alias runner-status="sudo systemctl status actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service"' >> ~/.bashrc
+echo 'alias runner-status="sudo systemctl status actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service --no-pager"' >> ~/.bashrc
 echo 'alias runner-start="sudo systemctl start actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service"' >> ~/.bashrc
 echo 'alias runner-stop="sudo systemctl stop actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service"' >> ~/.bashrc
+echo 'alias runner-restart="sudo systemctl restart actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service"' >> ~/.bashrc
 echo 'alias runner-logs="sudo journalctl -u actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service -f"' >> ~/.bashrc
 source ~/.bashrc
-
 ```
+
+
 
 ## Valheim Setup for Modding
 
+
 ### Install .NET SDK 10
 
-```text
 
+```text
 wget https://dot.net/v1/dotnet-install.sh
 chmod +x dotnet-install.sh
 ./dotnet-install.sh --channel 10.0
 
 # Add to PATH
-
 echo 'export PATH="$HOME/.dotnet:$PATH"' >> ~/.bashrc
 source ~/.bashrc
-
 ```
+
 
 ### Install SteamCMD
 
-```text
 
+```text
 sudo add-apt-repository multiverse
 sudo apt update
 sudo apt install steamcmd
-
 ```
+
 
 ### Install Valheim (Windows version for modding)
 
+
 ```text
-
-
 # First-time login (requires Steam Guard code)
-
 steamcmd +login YOUR_STEAM_USERNAME
 
 # Install Valheim Windows version
-
 steamcmd +@sSteamCmdForcePlatformType windows \
 +login YOUR_STEAM_USERNAME \
 +force_install_dir /home/gh-runner/valheim \
@@ -211,45 +346,47 @@ steamcmd +@sSteamCmdForcePlatformType windows \
 +quit
 
 # Verify installation
-
 ls -la /home/gh-runner/valheim/valheim_Data/Managed/
-
 ```
+
 
 ### Update Valheim (use in workflows)
 
-```text
 
+```text
 steamcmd +@sSteamCmdForcePlatformType windows \
 +login YOUR_STEAM_USERNAME \
 +force_install_dir /home/gh-runner/valheim \
 +app_update 892970 validate \
 +quit
-
 ```
+
+
 
 ## Automatic Valheim Updates
 
+
 ### Option 1: Update in Workflow (Recommended)
+
 
 `.github/workflows/build.yml`:
 
-```text
 
+```text
 name: Build Valheim Mod
 
 on:
-push:
-branches: [ main ]
-workflow_dispatch:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
-build:
-runs-on: self-hosted
+  build:
+    runs-on: self-hosted
 
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Update Valheim to latest
         run: |
           steamcmd +@sSteamCmdForcePlatformType windows \
@@ -257,27 +394,31 @@ runs-on: self-hosted
             +force_install_dir /home/gh-runner/valheim \
             +app_update 892970 validate \
             +quit
-      
+
       - name: Sync managed references
         run: |
           dotnet run tools/sync-managed.cs \
             --managedPath /home/gh-runner/valheim/valheim_Data/Managed \
             --outDir lib/net46
-      
+
       - name: Build
         run: dotnet build
-    ```
+```
+
 
 ### Option 2: Scheduled systemd Timer
 
-Create update script:
-```
 
-sudo nano /home/gh-runner/update-valheim.sh
+Create update script:
+
 
 ```text
+sudo nano /home/gh-runner/update-valheim.sh
+```
 
-\#!/bin/bash
+
+```text
+#!/bin/bash
 set -e
 
 LOG_FILE="/var/log/valheim-updater.log"
@@ -292,27 +433,26 @@ steamcmd +@sSteamCmdForcePlatformType windows \
   +quit 2>&1 | tee -a "$LOG_FILE"
 
 echo "[$(date)] Valheim update completed" | tee -a "$LOG_FILE"
-
 ```
+
 
 Make executable:
 
+
 ```text
-
 chmod +x /home/gh-runner/update-valheim.sh
-
 ```
+
 
 Create service:
 
+
 ```text
-
 sudo nano /etc/systemd/system/valheim-updater.service
-
 ```
 
-```text
 
+```text
 [Unit]
 Description=Valheim Auto Updater
 After=network-online.target
@@ -323,19 +463,18 @@ User=gh-runner
 ExecStart=/home/gh-runner/update-valheim.sh
 StandardOutput=journal
 StandardError=journal
-
 ```
+
 
 Create timer:
 
+
 ```text
-
 sudo nano /etc/systemd/system/valheim-updater.timer
-
 ```
 
-```text
 
+```text
 [Unit]
 Description=Valheim Auto Updater Timer
 Requires=valheim-updater.service
@@ -347,121 +486,125 @@ Persistent=true
 
 [Install]
 WantedBy=timers.target
-
 ```
+
 
 Enable timer:
 
-```text
 
+```text
 sudo systemctl daemon-reload
 sudo systemctl enable valheim-updater.timer
 sudo systemctl start valheim-updater.timer
 
 # Check status
-
 sudo systemctl status valheim-updater.timer
 sudo systemctl list-timers valheim-updater.timer
 
 # View logs
-
 sudo journalctl -u valheim-updater.service -f
-
 ```
+
+
 
 ## Troubleshooting
 
+
 ### Runner Won't Start After Reboot
 
+
 ```text
-
 # Check if enabled
-
 sudo systemctl is-enabled actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
 
 # If disabled
-
 sudo systemctl enable actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
 
 # Check full logs
-
 sudo journalctl -u actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service --since "today" --no-pager
-
 ```
 
-### Clean Runner Job Data
+
+### Fix: “The file '.../_diag/pages/...log' already exists”
+
+
+This usually means stale files are left in:
+
+`/home/gh-runner/actions-runner/_diag/pages/`
+
+Note: if it fails at “Set up job”, workflow steps have not started yet, so cleanup must happen on the host (manual cleanup) or via systemd `ExecStartPre` as shown above.[4]
+
+
+One-time cleanup:
+
 
 ```text
+sudo systemctl stop actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
 
-cd /home/gh-runner/actions-runner
-sudo ./svc.sh stop
+rm -rf /home/gh-runner/actions-runner/_diag/pages/* || true
+rm -rf /home/gh-runner/actions-runner/_work/_temp/* || true
 
-
-rm -rf /home/gh-runner/actions-runner/_diag/*
-rm -rf /home/gh-runner/actions-runner/_work/*
-rm -rf /home/gh-runner/actions-runner/_temp/*
-
-
-sudo ./svc.sh start
-
+sudo systemctl start actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
 ```
+
+
+### Fix: “A session for this runner already exists”
+
+
+Make sure `KillMode=control-group` is applied, and make sure you are not running `./run.sh` in parallel.[2]
+
+
+One-time “detox” if it is already stuck:
+
+
+```text
+sudo systemctl stop actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
+sudo pkill -f Runner.Listener || true
+sudo pkill -f run-helper.sh || true
+sudo systemctl start actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
+```
+
+
+### Clean Runner Job Data (safe variant)
+
+
+Avoid deleting the whole `_work` unless the runner is truly ephemeral; usually it is enough to clean `_diag/pages` and `_work/_temp`.[3]
+
+
+```text
+sudo systemctl stop actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
+
+rm -rf /home/gh-runner/actions-runner/_diag/pages/* || true
+rm -rf /home/gh-runner/actions-runner/_work/_temp/* || true
+
+sudo systemctl start actions.runner.CoffeeNova-Valheim.ManagedReferences.ubuntu-valheim-runner.service
+```
+
 
 ### GLIBC Version Error
 
+
 If you see errors about GLIBC_2.27 or GLIBC_2.28:
 
-**Solution 1:** Update Ubuntu to 18.04+
+**Solution:** upgrade Ubuntu to 18.04+
+
 
 ```text
-
 sudo do-release-upgrade
-
 ```
 
-**Solution 2:** Use older runner version with Node.js 16
-
-```text
-
-cd ~/actions-runner
-sudo systemctl stop actions.runner.*
-./config.sh remove --token YOUR_REMOVAL_TOKEN
-
-cd ~
-rm -rf actions-runner
-mkdir actions-runner \&\& cd actions-runner
-
-wget <https://github.com/actions/runner/releases/download/v2.311.0/actions-runner-linux-x64-2.311.0.tar.gz>
-tar xzf actions-runner-linux-x64-2.311.0.tar.gz
-
-./config.sh --url <https://github.com/YOUR_ORG/YOUR_REPO> --token YOUR_NEW_TOKEN
-
-# Then reinstall service as described above
-
-```
-
-### Runner Starts Manually but Not via systemd
-
-```text
-# Test manual run first
-
-cd ~/actions-runner
-./run.sh
-
-# If works, the issue is systemd configuration
-
-# Make sure service file uses run.sh and loads environment
-
-# ExecStart=/bin/bash -c "source /home/gh-runner/.profile \&\& /home/gh-runner/actions-runner/run.sh"
-
-```
 
 ### Check Runner Status in GitHub
+
 
 Go to: `https://github.com/YOUR_ORG/YOUR_REPO/settings/actions/runners`
 
 Should show: ✅ **Idle** (green) when working
 
+
+
 ## GitHub Secrets Setup
+
 
 Add to GitHub: Repository → Settings → Secrets and variables → Actions → New repository secret
 
@@ -469,53 +612,40 @@ Required secrets:
 
 - `STEAM_USERNAME` - Your Steam account username
 
+
+
 ## Key Commands Reference
 
+
 ```text
-
 # Check Ubuntu version
-
 lsb_release -a
 
 # Check GLIBC version
-
 ldd --version
 
 # Find Valheim installation
-
 find ~ -type d -name "*alheim" 2>/dev/null
 
 # Remove incorrectly installed Valheim
-
 rm -rf ~/.steam/steamapps/common/Valheim
 rm -f ~/.steam/steamapps/appmanifest_892970.acf
 
 # Test SteamCMD login (saves session)
-
 steamcmd +login YOUR_USERNAME +quit
-
-# Force reinstall runner service
-
-cd ~/actions-runner
-sudo systemctl stop actions.runner.*
-sudo ./svc.sh uninstall
-
-# Edit service file as shown above
-
-sudo systemctl daemon-reload
-sudo systemctl enable actions.runner.*
-sudo systemctl start actions.runner.*
-
 ```
+
+
 
 ## Important Notes
 
-1. **Steam Session**: SteamCMD saves login session for ~30 days. After first login with Steam Guard code, subsequent runs don't require password.
+
+1. **Steam Session**: SteamCMD saves login session for ~30 days. After first login with Steam Guard code, subsequent runs typically don't require Steam Guard again.
 
 2. **Platform Type**: Always use `+@sSteamCmdForcePlatformType windows` for Valheim modding, even on Linux. Mods require Windows DLLs.
 
-3. **Install Directory**: Use `+force_install_dir` to specify exact location. Without it, Steam uses default location (~/.steam/steamapps/common/).
+3. **Install Directory**: Use `+force_install_dir` to specify exact location. Without it, Steam uses a default Steam library path.
 
 4. **Auto-start**: The systemd service with `After=network-online.target` ensures runner starts after VM reboot.
 
-5. **Logs**: Always check `journalctl` for systemd service issues. For runner-specific issues, use `./run.sh` manually.
+5. **Diagnostics**: Runner diagnostic logs are stored under the runner install directory in `_diag/`.[3]

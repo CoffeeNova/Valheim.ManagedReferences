@@ -1,31 +1,26 @@
 name: Pack Managed References
 
 on:
-  push:
-    branches:
-        - main
-    tags:
-        - 'v*'
-  pull_request:
-    branches:
-        - main
-  # schedule:
-    # - cron: '0 */1 * * *'  # every hour
+  schedule:
+    - cron: '0 */1 * * *' # раз в час (можно реже)
   workflow_dispatch:
     inputs:
-      force_build:
-        description: 'Force build even if no Valheim updates'
-        required: false
+      publish:
+        description: 'Create git tag + GitHub Release'
         type: boolean
-        default: false
+        default: true
 
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: self-hosted
+
     env:
       DOTNET_INSTALL_DIR: ${{ github.workspace }}/.dotnet
-
+      VALHEIM_DIR: /home/gh-runner/valheim
+      VALHEIM_APPID: 892970
 
     steps:
       - name: Checkout
@@ -38,125 +33,124 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Install GitVersion
-        uses: gittools/actions/gitversion/setup@v3.1.11
-        with:
-          versionSpec: '6.0.x'
-
-      - name: Get current build ID
-        id: current_build
+      - name: Read installed Valheim build
+        id: installed
+        shell: bash
         run: |
-          MANIFEST_FILE="/home/gh-runner/valheim/steamapps/appmanifest_892970.acf"
-          if [ -f "$MANIFEST_FILE" ]; then
-            CURRENT_BUILD=$(grep -oP '"buildid"\s+"\K[^"]+' "$MANIFEST_FILE" || echo "0")
-            echo "current_build=$CURRENT_BUILD" >> $GITHUB_OUTPUT
-            echo "Current Valheim build: $CURRENT_BUILD"
+          MANIFEST="$VALHEIM_DIR/steamapps/appmanifest_${VALHEIM_APPID}.acf"
+          if [ -f "$MANIFEST" ]; then
+            BUILD=$(grep -oP '"buildid"\s+"\K[^"]+' "$MANIFEST" || echo "0")
           else
-            echo "current_build=0" >> $GITHUB_OUTPUT
-            echo "No existing installation found"
+            BUILD="0"
           fi
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
 
-
-      - name: Update Valheim
-        id: update_valheim
+      - name: Update Valheim (steamcmd)
+        id: updated
+        shell: bash
         timeout-minutes: 90
         run: |
-          LOG_FILE="/tmp/valheim_update_${{ github.run_number }}.log"
-
-          echo "Starting Valheim update at $(date)"
-
+          LOG="/tmp/valheim_update_${{ github.run_id }}.log"
           script -q -c "steamcmd \
             +@sSteamCmdForcePlatformType windows \
-            +force_install_dir /home/gh-runner/valheim \
+            +force_install_dir $VALHEIM_DIR \
             +login ${{ secrets.STEAM_USERNAME }} \
-            +app_update 892970 validate \
-            +quit" "$LOG_FILE"
+            +app_update $VALHEIM_APPID validate \
+            +quit" "$LOG"
+          cat "$LOG"
 
-          EXIT_CODE=$?
-
-          echo "Completed at $(date) with exit code: $EXIT_CODE"
-          echo "=== Update Log ==="
-          cat "$LOG_FILE"
-
-          if [ $EXIT_CODE -ne 0 ]; then
-            exit $EXIT_CODE
-          fi
-
-          # Get new build ID
-          MANIFEST_FILE="/home/gh-runner/valheim/steamapps/appmanifest_892970.acf"
-          if [ -f "$MANIFEST_FILE" ]; then
-            NEW_BUILD=$(grep -oP '"buildid"\s+"\K[^"]+' "$MANIFEST_FILE")
-            echo "new_build=$NEW_BUILD" >> $GITHUB_OUTPUT
-            echo "New Valheim build: $NEW_BUILD"
+          MANIFEST="$VALHEIM_DIR/steamapps/appmanifest_${VALHEIM_APPID}.acf"
+          if [ -f "$MANIFEST" ]; then
+            BUILD=$(grep -oP '"buildid"\s+"\K[^"]+' "$MANIFEST" || echo "0")
           else
-            echo "Error: Manifest file not found!"
-            exit 1
+            BUILD="0"
           fi
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
 
-
-      - name: Check if update occurred
-        id: check_update
+      - name: Decide whether to build
+        id: gate
+        shell: bash
         run: |
-          CURRENT="${{ steps.current_build.outputs.current_build }}"
-          NEW="${{ steps.update_valheim.outputs.new_build }}"
-          FORCE="${{ github.event.inputs.force_build }}"
+          INSTALLED="${{ steps.installed.outputs.build }}"
+          UPDATED="${{ steps.updated.outputs.build }}"
+          EVENT="${{ github.event_name }}"
 
-          echo "Current build: $CURRENT"
-          echo "New build: $NEW"
-          echo "Force build: $FORCE"
+          echo "installed=$INSTALLED updated=$UPDATED event=$EVENT"
 
-          if [ "$CURRENT" == "$NEW" ] && [ "$FORCE" != "true" ]; then
-            echo "No Valheim updates detected. Skipping build."
-            echo "updated=false" >> $GITHUB_OUTPUT
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
           else
-            if [ "$CURRENT" != "$NEW" ]; then
-              echo "Valheim was updated from $CURRENT to $NEW"
+            if [ "$INSTALLED" != "$UPDATED" ]; then
+              echo "build=true" >> "$GITHUB_OUTPUT"
             else
-              echo "Force build enabled, proceeding despite no updates"
+              echo "build=false" >> "$GITHUB_OUTPUT"
             fi
-            echo "updated=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Run GitVersion
-        id: gitversion
-        uses: gittools/actions/gitversion/execute@v3.1.11
-        with:
-          useConfigFile: true
-          configFilePath: GitVersion.yml
+          echo "valheim_build=$UPDATED" >> "$GITHUB_OUTPUT"
 
-      - name: Display version
-        shell: pwsh
+      - name: Compute package version
+        id: ver
+        if: steps.gate.outputs.build == 'true'
+        shell: bash
         run: |
-          echo "NuGetVersion: $env:GitVersion_SemVer"
-          echo "SemVer: $env:GitVersion_SemVer"
-          echo "FullSemVer: $env:GitVersion_FullSemVer"
+          BUILD="${{ steps.gate.outputs.valheim_build }}"
+          MAJOR="1"
+          PREFIX="v${MAJOR}.${BUILD}."
+
+          git fetch --tags --force
+
+          LAST_TAG=$(git tag -l "${PREFIX}*" --sort=-v:refname | head -n 1)
+          if [ -z "$LAST_TAG" ]; then
+            PATCH=0
+          else
+            PATCH="${LAST_TAG##*.}"
+            PATCH=$((PATCH + 1))
+          fi
+
+          VERSION="${MAJOR}.${BUILD}.${PATCH}"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Computed VERSION=$VERSION"
 
       - name: Sync managed references
-        if: steps.check_update.outputs.updated == 'true'
+        if: steps.gate.outputs.build == 'true'
+        shell: bash
         run: |
           dotnet run tools/sync-managed.cs \
             --managedPath /home/gh-runner/valheim/valheim_Data/Managed \
             --outDir lib/net46
 
       - name: Update nuspec and pack
-        if: steps.check_update.outputs.updated == 'true'
+        if: steps.gate.outputs.build == 'true'
+        shell: bash
         run: |
-          VERSION="${{ steps.gitversion.outputs.nuGetVersionV2 }}"
-          sed "s/<version>.*<\/version>/<version>$VERSION<\/version>/" template.nuspec > Valheim.Managed.nuspec
-          sed -i '/<\/metadata>/a\  <files>\n    <file src="lib/net46/**" target="lib/net46" />\n  </files>' Valheim.Managed.nuspec
+          VERSION="${{ steps.ver.outputs.version }}"
+          sed "s/.*<\/version>/${VERSION}<\/version>/" template.nuspec > Valheim.Managed.nuspec
           dotnet pack -p:NuspecFile=Valheim.Managed.nuspec -o .
 
       - name: Upload NuGet artifact
-        if: steps.check_update.outputs.updated == 'true'
+        if: steps.gate.outputs.build == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: nuget-package
           path: '*.nupkg'
 
-      - name: Create Release
-        if: steps.check_update.outputs.updated == 'true' && startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v1
+      - name: Tag (publish)
+        if: steps.gate.outputs.build == 'true' && (github.event_name == 'schedule' || github.event.inputs.publish == 'true')
+        shell: bash
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          TAG="${{ steps.ver.outputs.tag }}"
+          git tag "$TAG"
+          git push origin "$TAG"
+
+      - name: Create GitHub Release
+        if: steps.gate.outputs.build == 'true' && (github.event_name == 'schedule' || github.event.inputs.publish == 'true')
+        uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.ver.outputs.tag }}
           files: '*.nupkg'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          generate_release_notes: true
